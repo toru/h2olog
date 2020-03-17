@@ -134,8 +134,8 @@ struct quic_event_t {
     // from quicly
     char dcid[MAX_STR_LEN];
     char token_preview[TOKEN_PREVIEW_LEN];
-    u64 at;
-    u32 master_conn_id;
+    u64 time;
+    u32 conn;
     u64 pn;
     u64 len;
     u8 packet_type;
@@ -165,7 +165,7 @@ struct quic_event_t {
     u32 ret;
 
     // from h2o
-    u64 h2o_conn_id;
+    u64 h2o_conn;
     u64 h2o_req_id;
     char h2o_header_name[MAX_STR_LEN];
     char h2o_header_value[MAX_HEADER_VALUE_LEN];
@@ -173,7 +173,7 @@ struct quic_event_t {
 
 // defining it to calculate the size of h2o specific data.
 struct h2o_event_t {
-    u64 h2o_conn_id;
+    u64 h2o_conn;
     u64 h2o_req_id;
     char h2o_header_name[MAX_STR_LEN];
     char h2o_header_value[MAX_HEADER_VALUE_LEN];
@@ -189,8 +189,8 @@ int trace_quicly__accept(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &pos);
     bpf_probe_read(&event.dcid, MAX_STR_LEN, pos);
 
@@ -208,8 +208,8 @@ int trace_quicly__receive(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &pos);
     bpf_probe_read(&event.dcid, MAX_STR_LEN, pos);
 
@@ -227,8 +227,8 @@ int trace_quicly__version_switch(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.new_version);
 
     if (events.perf_submit(ctx, &event, sizeof(event) - sizeof(struct h2o_event_t)) < 0)
@@ -245,8 +245,8 @@ int trace_quicly__idle_timeout(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
 
     if (events.perf_submit(ctx, &event, sizeof(event) - sizeof(struct h2o_event_t)) < 0)
         bpf_trace_printk("failed to perf_submit\\n");
@@ -262,8 +262,8 @@ int trace_quicly__stateless_reset_receive(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
 
     if (events.perf_submit(ctx, &event, sizeof(event) - sizeof(struct h2o_event_t)) < 0)
         bpf_trace_printk("failed to perf_submit\\n");
@@ -279,7 +279,7 @@ int trace_quicly__crypto_decrypt(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
+    event.conn = conn.master_id;
     bpf_usdt_readarg(2, ctx, &event.pn);
     bpf_usdt_readarg(4, ctx, &event.len);
 
@@ -297,7 +297,7 @@ int trace_quicly__crypto_handshake(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
+    event.conn = conn.master_id;
     bpf_usdt_readarg(2, ctx, &event.ret);
 
     if (events.perf_submit(ctx, &event, sizeof(event) - sizeof(struct h2o_event_t)) < 0)
@@ -314,8 +314,8 @@ int trace_quicly__packet_prepare(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.first_octet);
     bpf_usdt_readarg(4, ctx, &pos);
     bpf_probe_read(&event.dcid, MAX_STR_LEN, pos);
@@ -334,8 +334,8 @@ int trace_quicly__packet_commit(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.pn);
     bpf_usdt_readarg(4, ctx, &event.len);
     bpf_usdt_readarg(5, ctx, &event.ack_only);
@@ -354,8 +354,8 @@ int trace_quicly__packet_acked(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.pn);
     bpf_usdt_readarg(4, ctx, &event.newly_acked);
 
@@ -373,8 +373,8 @@ int trace_quicly__packet_lost(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.pn);
 
     if (events.perf_submit(ctx, &event, sizeof(event) - sizeof(struct h2o_event_t)) < 0)
@@ -391,8 +391,8 @@ int trace_quicly__cc_ack_received(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.largest_acked);
     bpf_usdt_readarg(4, ctx, &event.bytes_acked);
     bpf_usdt_readarg(5, ctx, &event.cwnd);
@@ -412,8 +412,8 @@ int trace_quicly__cc_congestion(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.max_lost_pn);
     bpf_usdt_readarg(4, ctx, &event.inflight);
     bpf_usdt_readarg(5, ctx, &event.cwnd);
@@ -433,8 +433,8 @@ int trace_quicly__quictrace_cc_ack(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &pos);
     bpf_probe_read(&rtt, sizeof(rtt), pos);
     event.min_rtt = rtt.min_rtt;
@@ -459,8 +459,8 @@ int trace_quicly__quictrace_cc_lost(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &pos);
     bpf_probe_read(&rtt, sizeof(rtt), pos);
     event.min_rtt = rtt.min_rtt;
@@ -483,8 +483,8 @@ int trace_quicly__transport_close_send(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.frame_type);
 
     return 0;
@@ -498,8 +498,8 @@ int trace_quicly__transport_close_receive(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.error_code);
     bpf_usdt_readarg(4, ctx, &event.frame_type);
 
@@ -514,8 +514,8 @@ int trace_quicly__application_close_send(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.error_code);
 
     return 0;
@@ -529,8 +529,8 @@ int trace_quicly__new_token_send(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &pos);
     bpf_probe_read(&event.token_preview, TOKEN_PREVIEW_LEN, pos);
     bpf_usdt_readarg(4, ctx, &event.len);
@@ -550,8 +550,8 @@ int trace_quicly__new_token_acked(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.token_generation);
 
     if (events.perf_submit(ctx, &event, sizeof(event) - sizeof(struct h2o_event_t)) < 0)
@@ -568,8 +568,8 @@ int trace_quicly__new_token_receive(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &pos);
     bpf_probe_read(&event.token_preview, TOKEN_PREVIEW_LEN, pos);
     bpf_usdt_readarg(4, ctx, &event.len);
@@ -588,8 +588,8 @@ int trace_quicly__streams_blocked_send(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.limit);
     bpf_usdt_readarg(4, ctx, &event.is_unidirectional);
 
@@ -607,8 +607,8 @@ int trace_quicly__streams_blocked_receive(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.limit);
     bpf_usdt_readarg(4, ctx, &event.is_unidirectional);
 
@@ -626,8 +626,8 @@ int trace_quicly__data_blocked_receive(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.off);
 
     if (events.perf_submit(ctx, &event, sizeof(event) - sizeof(struct h2o_event_t)) < 0)
@@ -644,8 +644,8 @@ int trace_quicly__stream_data_blocked_receive(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.stream_id);
     bpf_usdt_readarg(4, ctx, &event.limit);
 
@@ -663,8 +663,8 @@ int trace_quicly__quictrace_sent(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.pn);
     bpf_usdt_readarg(4, ctx, &event.len);
     bpf_usdt_readarg(5, ctx, &event.packet_type);
@@ -684,8 +684,8 @@ int trace_quicly__quictrace_send_stream(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &pos);
     bpf_probe_read(&stream, sizeof(stream), pos);
     if (stream.stream_id < 0)
@@ -710,8 +710,8 @@ int trace_quicly__quictrace_recv(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.pn);
 
     if (events.perf_submit(ctx, &event, sizeof(event) - sizeof(struct h2o_event_t)) < 0)
@@ -728,8 +728,8 @@ int trace_quicly__quictrace_recv_ack(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.ack_block_begin);
     bpf_usdt_readarg(4, ctx, &event.ack_block_end);
 
@@ -747,8 +747,8 @@ int trace_quicly__quictrace_recv_ack_delay(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.ack_delay);
 
     if (events.perf_submit(ctx, &event, sizeof(event) - sizeof(struct h2o_event_t)) < 0)
@@ -765,8 +765,8 @@ int trace_quicly__quictrace_lost(struct pt_regs *ctx) {
 
     bpf_usdt_readarg(1, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
-    bpf_usdt_readarg(2, ctx, &event.at);
+    event.conn = conn.master_id;
+    bpf_usdt_readarg(2, ctx, &event.time);
     bpf_usdt_readarg(3, ctx, &event.pn );
 
     if (events.perf_submit(ctx, &event, sizeof(event) - sizeof(struct h2o_event_t)) < 0)
@@ -784,12 +784,12 @@ int trace_h2o__send_response_header(struct pt_regs *ctx) {
     size_t name_len = 0;
     INIT_EVENT_NAME(event);
 
-    bpf_usdt_readarg(1, ctx, &event.h2o_conn_id);
+    bpf_usdt_readarg(1, ctx, &event.h2o_conn);
 
-    const u32 *master_conn_id_ptr = h2o_to_quicly_conn.lookup(&event.h2o_conn_id);
-    if (master_conn_id_ptr == NULL)
+    const u32 *conn_ptr = h2o_to_quicly_conn.lookup(&event.h2o_conn);
+    if (conn_ptr == NULL)
         return 0;
-    event.master_conn_id = *master_conn_id_ptr;
+    event.conn = *conn_ptr;
 
     bpf_usdt_readarg(2, ctx, &event.h2o_req_id);
     bpf_usdt_readarg(3, ctx, &pos);
@@ -818,13 +818,13 @@ int trace_h2o__h3_accept(struct pt_regs *ctx) {
     struct st_quicly_conn_t conn = {};
     INIT_EVENT_NAME(event);
 
-    bpf_usdt_readarg(1, ctx, &event.h2o_conn_id);
+    bpf_usdt_readarg(1, ctx, &event.h2o_conn);
     // ignore arg 2 (struct st_h2o_conn_t*)
     bpf_usdt_readarg(3, ctx, &pos);
     bpf_probe_read(&conn, sizeof(conn), pos);
-    event.master_conn_id = conn.master_id;
+    event.conn = conn.master_id;
 
-    h2o_to_quicly_conn.update(&event.h2o_conn_id, &event.master_conn_id);
+    h2o_to_quicly_conn.update(&event.h2o_conn, &event.conn);
 
     if (events.perf_submit(ctx, &event, sizeof(event)) < 0)
         bpf_trace_printk("failed to perf_submit\\n");
@@ -836,15 +836,15 @@ int trace_h2o__h3_close(struct pt_regs *ctx) {
     struct quic_event_t event = {};
     INIT_EVENT_NAME(event);
 
-    bpf_usdt_readarg(1, ctx, &event.h2o_conn_id);
+    bpf_usdt_readarg(1, ctx, &event.h2o_conn);
 
-    const u32 *master_conn_id_ptr = h2o_to_quicly_conn.lookup(&event.h2o_conn_id);
-    if (master_conn_id_ptr != NULL) {
-        event.master_conn_id = *master_conn_id_ptr;
+    const u32 *conn_ptr = h2o_to_quicly_conn.lookup(&event.h2o_conn);
+    if (conn_ptr != NULL) {
+        event.conn = *conn_ptr;
     } else {
-        bpf_trace_printk("h2o_conn_id=%lu is not associated to master_conn_id\\n", event.h2o_conn_id);
+        bpf_trace_printk("h2o_conn=%lu is not associated to conn\\n", event.h2o_conn);
     }
-    h2o_to_quicly_conn.delete(&event.h2o_conn_id);
+    h2o_to_quicly_conn.delete(&event.h2o_conn);
 
     if (events.perf_submit(ctx, &event, sizeof(event)) < 0)
         bpf_trace_printk("failed to perf_submit\\n");
@@ -883,9 +883,9 @@ quic_type_map =  {
     "quicly__quictrace_recv": ["pn"],
     "quicly__quictrace_recv_ack_delay": ["ack_delay"],
     "quicly__quictrace_lost": ["pn"],
-    "h2o__send_response_header": ["h2o_conn_id", "h2o_req_id", "h2o_header_name", "h2o_header_value"],
-    "h2o__h3_accept": ["h2o_conn_id"],
-    "h2o__h3_close": ["h2o_conn_id"],
+    "h2o__send_response_header": ["h2o_conn", "h2o_req_id", "h2o_header_name", "h2o_header_value"],
+    "h2o__h3_accept": ["h2o_conn"],
+    "h2o__h3_close": ["h2o_conn"],
 }
 
 # Hack to make it work both on python2 and python3
@@ -915,9 +915,9 @@ def handle_resp_line(cpu, data, size):
     print("%u %u TxStatus   %d" % (line.conn_id, line.req_id, line.http_status))
 
 def load_common_fields(hsh, line):
-    hsh["time"] = int(time.time() * 1000) if line.at == 0 else line.at
+    hsh["time"] = int(time.time() * 1000) if line.time == 0 else line.time
     hsh["type"] = line.type.replace("quicly__", "", 1).replace("_", "-")
-    hsh["conn"] = line.master_conn_id
+    hsh["conn"] = line.conn
 
 def build_quic_trace_result(res, event, fields):
     for k in fields:
