@@ -1,0 +1,285 @@
+#!python
+# usage: h2otrace PID
+
+from __future__ import print_function
+import re, ctypes, sys, json, binascii
+from collections import OrderedDict
+from bcc import USDT, BPF
+
+def slurp(path):
+    with open(path, "r") as f:
+        return f.read()
+
+d = slurp("./quicly-probes.d")
+
+block_fields = {
+    "quicly:crypto_decrypt": set(["decrypted"]),
+    "quicly:receive": set(["bytes"]),
+    "quicly:crypto_update_secret": set(["secret"]),
+    "quicly:crypto_send_key_update": set(["secret"]),
+    "quicly:crypto_receive_key_update": set(["secret"]),
+    "quicly:crypto_receive_key_update_prepare": set(["secret"]),
+}
+
+block_probes = set([
+    "quicly:debug_message",
+    "quicly:free",
+])
+
+# mapping from proves.d's to quic-trace's:
+rename_map = {
+    "at": "time",
+    "master_id": "master_conn_id",
+}
+
+whitespace = r'(?:/\*.*?\*/|\s+)'
+probe_decl = r'(?:\bprobe\s+(?:[a-zA-Z0-9_]+)\s*\([^\)]*\)\s*;)'
+d_decl = r'(?:\bprovider\s*(?P<provider>[a-zA-Z0-9_]+)\s*\{(?P<probes>(?:%s|%s)*)\})' % (probe_decl, whitespace)
+
+re_flags = re.X | re.M | re.S
+
+matched = re.search(d_decl, d, flags = re_flags)
+provider = matched.group('provider')
+
+struct_def = r"""
+// Fields that include "dummy" are ignored
+
+struct st_quicly_stream_t {
+    u64 dummy;
+    s64 stream_id;
+};
+
+struct st_quicly_conn_t {
+    u32 dummy[4];
+    u32 master_id;
+};
+
+struct st_h2o_conn_t {
+    void *dummy_ctx;
+    void **dummy_hosts;
+    u64 dummy_connected_at[2];
+    u64 h2o_conn_id;
+};
+
+struct quicly_rtt_t {
+    u32 minimum;
+    u32 smoothed;
+    u32 variance;
+    u32 latest;
+};
+
+struct st_quicly_address_token_plaintext_t {
+    int dummy;
+};
+"""
+
+def strip_typename(t):
+    return t.replace("*", "").replace("struct", "").replace("const", "").replace("strict", "").strip()
+
+def is_str_type(t):
+    return re.search(r'\b(?:char|u?int8_t|void)\s*\*', t)
+
+def is_ptr_type(t):
+    return "*" in t
+
+def is_bin_type(t):
+    return re.search(r'uint8_t\s*\*', t)
+
+def build_tracer_name(provider, metadata):
+    return "trace_%s__%s" % (provider, metadata['probe'])
+
+def build_tracer(provider, metadata):
+    c = r"""
+int %s(struct pt_regs *ctx) {
+    void *buf = NULL;
+    struct event_t event = { .id = %d };
+
+""" % (build_tracer_name(provider, metadata), metadata['id'])
+
+    block_field_set = block_fields.get(metadata["fully_specified_probe_name"], set())
+
+    i = 0
+    args = metadata['args']
+    str_i = 0
+    int_i = 0
+    while i < len(args):
+        arg = args[i]
+        arg_name = arg['name']
+        arg_type = arg['type']
+        assert 'size' in arg
+        arg_size = arg['size']
+        c += "    // %s %s: %d\n" % (arg_type, arg_name, arg_size)
+        if arg_name in block_field_set:
+            c += "    // (ignored because it's in the block list)\n"
+            i += 1
+            continue
+
+        if is_str_type(arg_type):
+            c += "    bpf_usdt_readarg(%d, ctx, &buf);\n" % (i+1)
+            # Use `sizeof(buf)` instead of a length variable, because older kernels
+            # do not accept a variable for `bpf_probe_read()`'s length parameter.
+            c += "    bpf_probe_read(&event.s%d, sizeof(event.s%d), buf);\n" % (str_i, str_i)
+            str_i += 1
+        elif is_ptr_type(arg_type):
+            c += "    %s %s = {};\n" % (arg_type.replace("*", ""), arg_name)
+            c += "    bpf_usdt_readarg(%d, ctx, &buf);\n" % (i+1)
+            c += "    bpf_probe_read(&%s, sizeof(%s), buf);\n" % (arg_name, arg_name)
+            st_name = strip_typename(arg_type)
+            for st_key, st_valtype in st_map[st_name].items():
+                c += "    event.i%d = %s.%s; /* %s */\n" % (int_i, arg_name, st_key, st_valtype)
+                int_i += 1
+        else:
+            c += "    bpf_usdt_readarg(%d, ctx, &event.i%d);\n" % (i+1, int_i)
+            int_i += 1
+        i += 1
+    diff = ""
+    if str_i > 0:
+        diff = " - %d" % (str_i * 32)
+    c += """
+    if (events.perf_submit(ctx, &event, sizeof(event)%s) != 0)
+        bpf_trace_printk("failed to perf_submit\\n");
+
+    return 0;
+}\n""" % diff
+    return c
+
+
+st_map = {}
+for (st_name, content) in re.findall(r'struct\s+([a-zA-Z0-9_]+)\s*\{([^}]*)\}', struct_def, flags = re_flags):
+    st = st_map[st_name] = {}
+    for (ctype, name, is_array) in re.findall(r'(\w+[^;]*[\w\*])\s+([a-zA-Z0-9_]+)(\[\d+\])?;', content, flags = re_flags):
+        if "dummy" in name:
+            continue
+        st[name] = ctype + is_array
+
+probe_metadata = {}
+probe_id2name = {}
+max_ints = 0
+max_strs = 0
+
+id = 0
+for (name, args) in re.findall(r'\bprobe\s+([a-zA-Z0-9_]+)\(([^\)]+)\);', matched.group('probes'), flags = re_flags):
+    arg_list = re.split(r'\s*,\s*', args, flags = re_flags)
+    id += 1
+    metadata = {
+        "id": id,
+        "probe": name,
+        "fully_specified_probe_name": "%s:%s" % (provider, name),
+    }
+    probe_id2name[id] = name
+    probe_metadata[name] = metadata
+    args = metadata['args'] = map(
+        lambda arg: re.match(r'(?P<type>\w[^;]*[^;\s])\s*\b(?P<name>[a-zA-Z0-9_]+)', arg, flags = re_flags).groupdict(),
+        arg_list)
+
+    # args map is a flat arg list
+    args_map = metadata['args_map'] = OrderedDict()
+
+    n_ints = 0
+    n_strs = 0
+    for arg in args:
+        if is_str_type(arg['type']):
+            args_map["s%d" % n_strs] = (arg['name'], is_bin_type(arg['type']))
+            n_strs += 1
+        elif is_ptr_type(arg['type']):
+            # it assumes that all the fields in the struct are values (i.e. integers)
+            for st_key in st_map[strip_typename(arg['type'])]:
+                args_map["i%d" % n_ints] = (st_key, False)
+                n_ints += 1
+        else:
+            args_map["i%d" % n_ints] = (arg['name'], False)
+            n_ints += 1
+
+    if max_ints < n_ints:
+        max_ints = n_ints
+    if max_strs < n_strs:
+        max_strs = n_strs
+
+bpf = r"""
+struct event_t {
+    u8 id;
+
+"""
+
+for i in xrange(max_ints):
+    bpf += "    u64 i%d;\n" % i
+for i in xrange(max_strs):
+    bpf += "    char s%d[32];\n" % i
+
+bpf += r"""
+};
+
+BPF_PERF_OUTPUT(events);
+
+""" + struct_def
+
+
+u = USDT(pid = int(sys.argv[1]))
+for probe in u.enumerate_probes():
+    if probe.provider != provider:
+        continue
+
+    metadata = probe_metadata[probe.name]
+
+    if metadata["fully_specified_probe_name"] in block_probes:
+        continue
+
+    args = metadata['args']
+    for i in range(0, probe.num_locations):
+        location = probe.get_location(i)
+        for j in range(0, location.num_arguments):
+            arg = location.get_argument(j)
+            args[j]['signed'] = arg.size < 0
+            args[j]['size'] = abs(arg.size)
+    bpf += build_tracer(provider, metadata)
+    u.enable_probe(probe.name, build_tracer_name(provider, metadata))
+
+print(bpf, file = sys.stderr)
+
+b = BPF(text=bpf, usdt_contexts=[u], cflags=[])
+print("start to trace!", file = sys.stderr)
+
+json_encoder = json.JSONEncoder(
+    separators = (',', ':'),
+    allow_nan = False,
+)
+empty_set = set()
+
+out = sys.stdout
+
+def json_write_pair(out, name, value, comma_first):
+    if comma_first:
+        out.write(',')
+    out.write(json_encoder.encode(name))
+    out.write(':')
+    out.write(json_encoder.encode(value))
+
+def handle_quic_event(cpu, data, size):
+    ev = b["events"].event(data)
+    name = probe_id2name[ev.id]
+
+    # output JSON by hand for speed
+    out.write('{')
+    json_write_pair(out, "name", name, False)
+    metadata = probe_metadata[name]
+
+    block_field_set = block_fields.get(metadata["fully_specified_probe_name"], empty_set)
+
+    for event_t_name, (probe_field_name, is_bin) in metadata['args_map'].items():
+        if probe_field_name in block_field_set:
+            continue
+        data_field_name = rename_map.get(probe_field_name, probe_field_name)
+        value = getattr(ev, event_t_name)
+        if is_bin:
+            value = binascii.hexlify(value)
+        json_write_pair(out, data_field_name, value, True)
+
+    out.write('}\n')
+    out.flush()
+
+b["events"].open_perf_buffer(handle_quic_event, page_cnt=256)
+try:
+    while True:
+        b.perf_buffer_poll()
+except KeyboardInterrupt:
+    sys.exit()
