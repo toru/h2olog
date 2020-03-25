@@ -3,10 +3,12 @@
 
 from __future__ import print_function
 import re, ctypes, sys, json, binascii, os, time
+from multiprocessing import Queue, Process
 from collections import OrderedDict
-from bcc import USDT, BPF
+from itertools import izip_longest
+from bcc import USDT, BPF, get_online_cpus
 
-os.nice(-10) # to give it a little bit more CPU
+# os.nice(-1) # to give it a little bit more CPU
 
 def slurp(path):
     with open(path, "r") as f:
@@ -236,7 +238,8 @@ for probe in u.enumerate_probes():
     bpf += build_tracer(provider, metadata)
     u.enable_probe(probe.name, build_tracer_name(provider, metadata))
 
-print(bpf, file = sys.stderr)
+if __debug__:
+    print(bpf, file = sys.stderr)
 
 b = BPF(text=bpf, usdt_contexts=[u], cflags=[])
 print("start to trace!", file = sys.stderr)
@@ -249,29 +252,14 @@ json_encoder = json.JSONEncoder(
 
 out = sys.stdout
 
-def json_write_pair(out, name, value, comma_first):
-    if comma_first:
-        out.write(',')
-    out.write('"')
-    out.write(name)
-    out.write('":')
-    if isinstance(value, (int, long)):
-        out.write(str(value))
-    else:
-        out.write(json_encoder.encode(value))
-
-nops = 0
+# multiprocessing.Value is not available on some environments
 def handle_quic_event(cpu, data, size):
-    global nops
     try:
-        nops += 1
-
         ev = b["events"].event(data)
         name = probe_id2name[ev.id]
 
-        # output JSON by hand for speed
-        out.write('{')
-        json_write_pair(out, 'name', name, False)
+        data = OrderedDict()
+        data["name"] = name
         metadata = probe_metadata[name]
 
         block_field_set = block_fields.get(metadata["fully_specified_probe_name"], None)
@@ -285,25 +273,45 @@ def handle_quic_event(cpu, data, size):
             value = getattr(ev, event_t_name)
             if is_bin:
                 value = binascii.hexlify(value)
-            json_write_pair(out, data_field_name, value, True)
-
-        out.write('}\n')
+            data[data_field_name] = value
+        print(json_encoder.encode(data), file = out)
     except KeyboardInterrupt:
         sys.exit()
 
 
-b["events"].open_perf_buffer(handle_quic_event, page_cnt=256)
-t0 = time.time()
-try:
-    while True:
-        b.perf_buffer_poll()
+def do_work(cpus):
+    # we have to use a private method for CPU pinning
+    for cpu in cpus:
+        b["events"]._open_perf_buffer(cpu, handle_quic_event, page_cnt=64, lost_cb = None)
+    try:
+        while True:
+            b.perf_buffer_poll()
+    except KeyboardInterrupt:
+        sys.exit()
 
-        t1 = time.time()
-        d = t1 - t0
-        if d >= 1.0:
-            out.flush()
-            sys.stderr.write("%10d op/s\n" % (nops / d))
-            t0 = t1
-            nops = 0
-except KeyboardInterrupt:
-    sys.exit()
+def grouper(n, iterable, fillvalue=None):
+    args = [iter(iterable)] * n
+    return izip_longest(fillvalue=fillvalue, *args)
+
+processes = []
+for cpus in grouper(8, get_online_cpus()):
+    p = Process(target = do_work, args = (cpus,))
+    p.start()
+    processes.append(p)
+
+for p in processes:
+    p.join()
+
+# t0 = time.time()
+# while True:
+#     time.sleep(1)
+
+#     t1 = time.time()
+#     d = t1 - t0
+#     count = 0
+#     while nops.get(block = False):
+#         count += 1
+#     sys.stderr.write("%10d op/s\n" % (nops.count / d))
+#     t0 = time.time()
+
+
