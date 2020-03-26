@@ -157,7 +157,7 @@ for (st_name, content) in re.findall(r'struct\s+([a-zA-Z0-9_]+)\s*\{([^}]*)\}', 
         st[name] = ctype + is_array
 
 probe_metadata = {}
-probe_id2name = {}
+probe_id2metadata = {}
 max_ints = 0
 max_strs = 0
 
@@ -170,7 +170,7 @@ for (name, args) in re.findall(r'\bprobe\s+([a-zA-Z0-9_]+)\(([^\)]+)\);', matche
         "probe": name,
         "fully_specified_probe_name": "%s:%s" % (provider, name),
     }
-    probe_id2name[id] = name
+    probe_id2metadata[id] = metadata
     probe_metadata[name] = metadata
     args = metadata['args'] = map(
         lambda arg: re.match(r'(?P<type>\w[^;]*[^;\s])\s*\b(?P<name>[a-zA-Z0-9_]+)', arg, flags = re_flags).groupdict(),
@@ -252,15 +252,28 @@ json_encoder = json.JSONEncoder(
 
 out = sys.stdout
 
+def write_json_pair(name, value):
+    global out
+    out.write(',"') # a following comma!
+    out.write(name)
+    out.write('":')
+    if isinstance(value, (int, long)):
+        out.write(str(value))
+    else:
+        for part in json_encoder.iterencode(value):
+            out.write(part)
+
 # multiprocessing.Value is not available on some environments
 def handle_quic_event(cpu, data, size):
     try:
         ev = b["events"].event(data)
-        name = probe_id2name[ev.id]
+        metadata = probe_id2metadata[ev.id]
+        name = metadata["probe"]
 
-        data = OrderedDict()
-        data["name"] = name
-        metadata = probe_metadata[name]
+        out.write("{")
+        out.write('"type":"')
+        out.write(name)
+        out.write('"')
 
         block_field_set = block_fields.get(metadata["fully_specified_probe_name"], None)
 
@@ -273,19 +286,26 @@ def handle_quic_event(cpu, data, size):
             value = getattr(ev, event_t_name)
             if is_bin:
                 value = binascii.hexlify(value)
-            data[data_field_name] = value
-        print(json_encoder.encode(data), file = out)
-    except KeyboardInterrupt:
-        sys.exit()
+            write_json_pair(data_field_name, value)
+        out.write("}\n")
+    except Exception as e:
+        print(e, file = sys.stderr)
+        if isinstance(e, KeyboardInterrupt):
+            sys.exit(0)
+        else:
+            sys.exit(1)
 
 
 def do_work(cpus):
     # we have to use a private method for CPU pinning
     for cpu in cpus:
-        b["events"]._open_perf_buffer(cpu, handle_quic_event, page_cnt=64, lost_cb = None)
+        def lost_cb(lost):
+            print("Possibly lost %d data ($$=%d, cpu=%d)" % (lost, os.getpid(), cpu), file = sys.stderr)
+        b["events"]._open_perf_buffer(cpu, handle_quic_event, page_cnt=256, lost_cb = lost_cb)
     try:
         while True:
             b.perf_buffer_poll()
+            out.flush()
     except KeyboardInterrupt:
         sys.exit()
 
