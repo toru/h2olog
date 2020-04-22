@@ -22,6 +22,7 @@
 
 #include <vector>
 #include <unistd.h>
+#include <signal.h>
 #include <stdarg.h>
 
 #include "h2olog.h"
@@ -160,6 +161,13 @@ static void lost_cb(void *context, uint64_t lost)
     tracer->handle_lost(tracer, lost);
 }
 
+std::function<void(int)> shutdown_handler;
+
+static void sig_cb(int signum)
+{
+    shutdown_handler(signum);
+}
+
 int main(int argc, char **argv)
 {
     h2o_tracer_t tracer = {};
@@ -263,6 +271,29 @@ int main(int argc, char **argv)
     if (debug) {
         show_process(h2o_pid);
     }
+
+    shutdown_handler = [&](int s) {
+        if (debug) {
+            logf("%s", strsignal(s));
+        }
+
+        if (bpf == nullptr) {
+            return;
+        }
+
+        for (auto &probe : probes) {
+            auto ret = bpf->detach_usdt(probe);
+            if (ret.code() != 0) {
+                fprintf(stderr, "Error: detach_usdt: %s\n", ret.msg().c_str());
+            }
+        }
+
+        delete bpf;
+        bpf = nullptr;
+        exit(0);
+    };
+    signal(SIGINT, sig_cb);
+    signal(SIGTERM, sig_cb);
 
     ebpf::BPFPerfBuffer *perf_buffer = bpf->get_perf_buffer("events");
     if (perf_buffer) {
