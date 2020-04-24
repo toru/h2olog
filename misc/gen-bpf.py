@@ -313,7 +313,7 @@ std::vector<ebpf::USDT> quic_init_usdt_probes(pid_t pid) {
   handle_event_func = r"""
 static
 void quic_handle_event(h2o_tracer_t *tracer, const void *data, int data_len) {
-  int64_t time_ns = now_ns();
+  int64_t time_nanosec = now_nanosec();
 
   FILE *out = tracer->out;
   const quic_event_t *event = static_cast<const quic_event_t*>(data);
@@ -334,7 +334,7 @@ void quic_handle_event(h2o_tracer_t *tracer, const void *data, int data_len) {
     handle_event_func += "  case %s: { // %s\n" % (
         metadata['id'], fully_specified_probe_name)
     handle_event_func += '    json_write_pair_n(out, STR_LIT("type"), "%s");\n' % probe_name.replace("_", "-")
-    handle_event_func += '    json_write_pair_c(out, STR_LIT("time-ns"), time_ns);\n'
+    handle_event_func += '    json_write_pair_c(out, STR_LIT("time-nanosec"), time_nanosec);\n'
 
     for field_name, field_type in flat_args_map.items():
       if block_field_set and field_name in block_field_set:
@@ -359,7 +359,7 @@ void quic_handle_event(h2o_tracer_t *tracer, const void *data, int data_len) {
       if probe_name != "h3_accept":
         handle_event_func += '    json_write_pair_c(out, STR_LIT("conn"), event->%s.master_id);\n' % (
             probe_name)
-      handle_event_func += '    json_write_pair_c(out, STR_LIT("time"), time_ns / 1000000LL);\n'
+      handle_event_func += '    json_write_pair_c(out, STR_LIT("time"), time_nanosec / 1000000L);\n'
 
     handle_event_func += "    break;\n"
     handle_event_func += "  }\n"
@@ -392,10 +392,10 @@ const char *bpf_text = R"(
 %s
 )";
 
-static int64_t now_ns() {
+static int64_t now_nanosec() {
   struct timespec now;
   clock_gettime(CLOCK_REALTIME, &now);
-  return (static_cast<int64_t>(now.tv_sec) * 1000000000LL) + static_cast<int64_t>(now.tv_nsec);
+  return (static_cast<int64_t>(now.tv_sec) * 1000000000L) + static_cast<int64_t>(now.tv_nsec);
 }
 
 %s
@@ -403,14 +403,14 @@ static int64_t now_ns() {
 %s
 
 static void quic_handle_lost(h2o_tracer_t *tracer, uint64_t lost) {
-  int64_t time_ns = now_ns();
-  int64_t time_ms = time_ns / 1000000LL;
+  int64_t time_nanosec = now_nanosec();
+  int64_t time_millisec = time_nanosec / 1000000L;
   fprintf(tracer->out, "{"
     "\"type\":\"h2olog-event-lost\","
     "\"time\":%%" PRId64 ","
-    "\"time-ns\":%%" PRId64 ","
+    "\"time-nanosec\":%%" PRId64 ","
     "\"lost\":%%" PRIu64
-    "}\n", time_ms, time_ns, lost);
+    "}\n", time_millisec, time_nanosec, lost);
 }
 
 static const char *quic_bpf_ext() {
