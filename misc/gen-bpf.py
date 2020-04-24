@@ -313,8 +313,9 @@ std::vector<ebpf::USDT> quic_init_usdt_probes(pid_t pid) {
   handle_event_func = r"""
 static
 void quic_handle_event(h2o_tracer_t *tracer, const void *data, int data_len) {
-  FILE *out = tracer->out;
+  int64_t time_ns = now_ns();
 
+  FILE *out = tracer->out;
   const quic_event_t *event = static_cast<const quic_event_t*>(data);
 
   // output JSON
@@ -333,6 +334,7 @@ void quic_handle_event(h2o_tracer_t *tracer, const void *data, int data_len) {
     handle_event_func += "  case %s: { // %s\n" % (
         metadata['id'], fully_specified_probe_name)
     handle_event_func += '    json_write_pair_n(out, STR_LIT("type"), "%s");\n' % probe_name.replace("_", "-")
+    handle_event_func += '    json_write_pair_c(out, STR_LIT("time-ns"), time_ns);\n'
 
     for field_name, field_type in flat_args_map.items():
       if block_field_set and field_name in block_field_set:
@@ -357,7 +359,7 @@ void quic_handle_event(h2o_tracer_t *tracer, const void *data, int data_len) {
       if probe_name != "h3_accept":
         handle_event_func += '    json_write_pair_c(out, STR_LIT("conn"), event->%s.master_id);\n' % (
             probe_name)
-      handle_event_func += '    json_write_pair_c(out, STR_LIT("time"), time_milliseconds());\n'
+      handle_event_func += '    json_write_pair_c(out, STR_LIT("time"), time_ns / 1000000LL);\n'
 
     handle_event_func += "    break;\n"
     handle_event_func += "  }\n"
@@ -377,7 +379,7 @@ void quic_handle_event(h2o_tracer_t *tracer, const void *data, int data_len) {
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/time.h>
+#include <time.h>
 #include "h2olog.h"
 #include "data-types.h"
 #include "json.h"
@@ -390,11 +392,10 @@ const char *bpf_text = R"(
 %s
 )";
 
-static uint64_t time_milliseconds()
-{
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+static int64_t now_ns() {
+  struct timespec now;
+  clock_gettime(CLOCK_REALTIME, &now);
+  return (static_cast<int64_t>(now.tv_sec) * 1000000000LL) + static_cast<int64_t>(now.tv_nsec);
 }
 
 %s
@@ -402,7 +403,14 @@ static uint64_t time_milliseconds()
 %s
 
 static void quic_handle_lost(h2o_tracer_t *tracer, uint64_t lost) {
-  fprintf(tracer->out, "{\"type\":\"h2olog-event-lost\",\"time\":%%" PRIu64 ",\"lost\":%%" PRIu64 "}\n", time_milliseconds(), lost);
+  int64_t time_ns = now_ns();
+  int64_t time_ms = time_ns / 1000000LL;
+  fprintf(tracer->out, "{"
+    "\"type\":\"h2olog-event-lost\","
+    "\"time\":%%" PRId64 ","
+    "\"time-ns\":%%" PRId64 ","
+    "\"lost\":%%" PRIu64
+    "}\n", time_ms, time_ns, lost);
 }
 
 static const char *quic_bpf_ext() {
