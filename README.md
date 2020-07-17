@@ -1,5 +1,9 @@
 # h2olog
 
+<strong>This project has been integrated into [h2o/h2o](https://github.com/h2o/h2o/tree/master/h2olog).</strong>
+
+---
+
 A [varnishlog](https://varnish-cache.org/docs/trunk/reference/varnishlog.html)-like [BPF](https://www.kernel.org/doc/html/latest/bpf/index.html) ([kernel doc](https://www.kernel.org/doc/Documentation/networking/filter.txt)) backed HTTP request logging client for the [H2O](https://github.com/h2o/h2o) server.
 h2olog can also be used to log [QUIC](https://en.wikipedia.org/wiki/QUIC) events for [transport layer](https://en.wikipedia.org/wiki/Transport_layer) observation.
 See [Tracing QUIC events](#tracing-quic-events) for how.
