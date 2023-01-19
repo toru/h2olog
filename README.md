@@ -1,6 +1,6 @@
 # h2olog
 
-<strong>This project has been integrated into [h2o/h2o](https://github.com/h2o/h2o/tree/master/h2olog).</strong>
+<strong>This project has been integrated into [h2o/h2o](https://github.com/h2o/h2o/tree/master/src/h2olog).</strong>
 
 ---
 
